@@ -12,13 +12,6 @@ package Kernel::Modules::AgentSurveyExport;
 use strict;
 use warnings;
 
-use Kernel::System::Survey;
-use Kernel::System::CSV;
-use Kernel::System::HTMLUtils;
-
-use vars qw($VERSION);
-$VERSION = qw($Revision: 1.13 $) [1];
-
 sub new {
     my ( $Type, %Param ) = @_;
 
@@ -29,25 +22,20 @@ sub new {
     # get common objects
     %{$Self} = %Param;
 
-    # check needed objects
-    for my $Object (qw(ParamObject TicketObject DBObject LayoutObject LogObject ConfigObject)) {
-        if ( !$Self->{$Object} ) {
-            $Self->{LayoutObject}->FatalError( Message => "Got no $Object!" );
-        }
-    }
-    $Self->{SurveyObject} = Kernel::System::Survey->new(%Param);
-    $Self->{CSVObject}    = Kernel::System::CSV->new(%Param);
-    $Self->{HTMLUtilsObject} = Kernel::System::HTMLUtils->new(%Param);
-
     return $Self;
 }
 
 sub Run {
     my ( $Self, %Param ) = @_;
 
-    my $SurveyID = $Self->{ParamObject}->GetParam( Param => "SurveyID" );
+    my $SurveyObject = $Kernel::OM->Get('Kernel::System::Survey');
+    my $CSVObject = $Kernel::OM->Get('Kernel::System::CSV');
+    my $HTMLUtilsObject = $Kernel::OM->Get('Kernel::System::HTMLUtils');
+    my $LayoutObject = $Kernel::OM->Get('Kernel::Output::HTML::Layout');
 
-    my @Questions = $Self->{SurveyObject}->QuestionList(
+    my $SurveyID = $Kernel::OM->Get('Kernel::System::Web::Request')->GetParam( Param => "SurveyID" );
+
+    my @Questions = $SurveyObject->QuestionList(
         SurveyID => $SurveyID
     );
     my @CSVHead;
@@ -62,11 +50,11 @@ sub Run {
 	push @CSVHead, $_->{Question};
     }
 
-    my @List = $Self->{SurveyObject}->VoteList( SurveyID => $SurveyID );
+    my @List = $SurveyObject->VoteList( SurveyID => $SurveyID );
     # Sendezeit/SendTime, Abstimmungszeit/VoteTime
     for my $Vote (@List) {
 	my @Data;
-	my %Ticket = $Self->{TicketObject}->TicketGet( TicketID => $Vote->{TicketID} );
+	my %Ticket = $Kernel::OM->Get('Kernel::System::Ticket')->TicketGet( TicketID => $Vote->{TicketID} );
 	push @Data, $Vote->{SendTime};
 	push @Data, $Vote->{VoteTime};
 	push @Data, $Ticket{Queue};
@@ -75,13 +63,13 @@ sub Run {
 
 	for my $Question (@Questions) {
 	    my $Answer = "";
-	    my @Answers = $Self->{SurveyObject}->VoteGet(
+	    my @Answers = $SurveyObject->VoteGet(
 		RequestID  => $Vote->{RequestID},
 		QuestionID => $Question->{QuestionID},
             );
 	    if ( $Question->{Type} eq 'Radio' || $Question->{Type} eq 'Checkbox' ) {
 		for my $Row (@Answers) {
-                    my %AnswerText = $Self->{SurveyObject}->AnswerGet( AnswerID => $Row->{VoteValue} );
+                    my %AnswerText = $SurveyObject->AnswerGet( AnswerID => $Row->{VoteValue} );
                     $Answer .= $AnswerText{Answer};
                 }
 	    }
@@ -90,9 +78,9 @@ sub Run {
 		# clean html
                 if ( $Question->{Type} eq 'Textarea' && $Answer ) {
                     $Answer =~ s{\A\$html\/text\$\s(.*)}{$1}xms;
-                    $Answer = $Self->{HTMLUtilsObject}->ToAscii( String => $Answer );
+                    $Answer = $HTMLUtilsObject->ToAscii( String => $Answer );
 		    # make excel linebreak in cell work
-		    $Answer =~ s/\n/\r/g; 
+		    $Answer =~ s/\n/\r/g;
                 }
 	    }
 	    push @Data, $Answer;
@@ -102,20 +90,20 @@ sub Run {
     }
 
     # get Separator from language file
-    my $UserCSVSeparator = $Self->{LayoutObject}->{LanguageObject}->{Separator};
+    my $UserCSVSeparator = $LayoutObject->{LanguageObject}->{Separator};
 
-    if ( $Self->{ConfigObject}->Get('PreferencesGroups')->{CSVSeparator}->{Active} ) {
+    if ( $Kernel::OM->Get('Kernel::Config')->Get('PreferencesGroups')->{CSVSeparator}->{Active} ) {
         my %UserData = $Self->{UserObject}->GetUserData( UserID => $Self->{UserID} );
         $UserCSVSeparator = $UserData{UserCSVSeparator};
     }
 
-    my $CSV = $Self->{CSVObject}->Array2CSV(
+    my $CSV = $CSVObject->Array2CSV(
 	Head      => \@CSVHead,
 	Data      => \@CSVData,
 	Separator => $UserCSVSeparator,
     );
 
-    return $Self->{LayoutObject}->Attachment(
+    return $LayoutObject->Attachment(
 	Filename    => "survey.csv",
 	ContentType => "text/csv; charset=utf8",
 	Content     => $CSV,
